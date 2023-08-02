@@ -1,0 +1,164 @@
+---
+title: "Fully simulating the simple MNL"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Fully simulating the simple MNL}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(DCM)
+```
+
+## Introduction
+
+Can we estimate an MNL by simulating the integral over the errors? Recall the following general structure of a discrete choice model:
+
+$$
+\begin{align}
+P(y|x) &= Prob(I[h(x, \varepsilon) = y] = 1) \\
+&= \int I[h(x, \varepsilon) = y] f(\varepsilon) d\varepsilon \\
+&= \int I[\beta'x + \varepsilon > 0] f(\varepsilon) d\varepsilon
+\end{align}
+$$
+
+The closed-form solution of this integral can be derived and thus there wouldn't be any need to simulate the likelihood. However, this is just an exercise to illustrate that we could simulate it (as more complexe models no longer have closed-form solutions).
+
+## Plug and play
+
+1. Draw from $f(\varepsilon)$ and label the $r$th draw $\varepsilon^r$.
+2. Compute $\beta'x + \varepsilon > 0$ and evaluate the indicator function. So let's say $t(x, \varepsilon) = I[\beta'x + \varepsilon > 0]$ then just compute $t(x, \varepsilon^r$).
+3. Repeat $R$ times.
+4. The integral (and thus our probability) is simply the average $1/R \sum_{r=1}^R t(x, \varepsilon^r)$.
+
+And that's exactly what we are going to do!
+
+## Implementation in R
+
+We use some simulated data for illustration
+
+```{r}
+dat_sim <- DCM::simulate_mnl()
+print(dat_sim$beta)
+head(dat_sim$data)
+```
+
+### Estimate the model using `mixl`
+
+```{r}
+df <- dat_sim$data
+df$ID <- 1:nrow(df)
+df$CHOICE <- df$choice
+
+mnl <- "
+  U_1 =          @beta11 * $x11 + @beta12 * $x12;
+  U_2 = @ASC2 + @beta21 * $x21 + @beta22 * $x22;
+"
+
+model_spec <- mixl::specify_model(mnl, df)
+
+n_params <- length(model_spec$beta_names)
+est <- stats::setNames(rep(0, n_params), model_spec$beta_names)
+
+availabilities <- mixl::generate_default_availabilities(df, model_spec$num_utility_functions)
+
+model <- mixl::estimate(model_spec, est, df, availabilities = availabilities)
+
+summary(model)
+```
+
+And unsurprisingly this matches our assumed coefficients:
+
+```{r}
+print(dat_sim$beta)
+```
+
+### Closed-form all in R implementation
+
+```{r}
+loglik <- function(param) {
+  U_1 <- param["beta11"] * df$x11 + param["beta12"] * df$x12
+  U_2 <- param["ASC2"] + param["beta21"] * df$x21 + param["beta22"] * df$x22
+  
+  # helpers
+  exp_1 <- exp(U_1)
+  exp_2 <- exp(U_2)
+  
+  y_1 <- as.numeric(df$choice == 1) # 1 if alternative 1 was chosen 0 otherwise
+  y_2 <- as.numeric(df$choice == 2) # 1 if alternative 2 was chosen 0 otherwise
+  
+  P_1n <- exp_1 / (exp_1 + exp_2)
+  P_2n <- exp_2 / (exp_1 + exp_2)
+  
+  sum(y_1 * log(P_1n) + y_2 * log(P_2n))
+}
+```
+
+Now, we do not need to implement the (numerical) maximization routines ourselves but simply pass it to `maxLik` specifying the use of the Broyden-Fletcher-Goldfarb-Shanno (BFGS) algorithm
+
+```{r}
+# define parameter vector (and starting values)
+param <- c(1, 1, 1, 1, 1)
+param <- setNames(param, c("ASC2", "beta11", "beta12", "beta21", "beta22"))
+
+m <- maxLik::maxLik(loglik, start = param, method = "BFGS")
+summary(m)
+```
+
+Compare the model coefficients to our own implementation!
+
+### Full simulation approach
+
+> If you are too dumb for theory, draw from the density...
+
+We'll now rewrite the `loglik` function and approximate the integral (over error terms) with help of simulation.
+
+Recall the general form of the probability derived before in the binary case was (for the binary case):
+
+$$
+P(y|x) = \int I[\beta'x + \varepsilon > 0] f(\varepsilon) d\varepsilon
+$$
+If we have more than two oucomes and assuming that the alternative with the greatest utility is chosen then we can write:
+
+
+TODO: first read train, then correct eq below (e.g. see p.15) then implement loglik
+...or just start with the binary case!! -> yes: keep it as simple as possible -> write simulate_binary
+$$
+\begin{align}
+P(y_i|x) = \int I[\beta'x_i + \varepsilon_i > \beta'x_j + \varepsilon_j] f(\varepsilon) d\varepsilon
+\end{align}
+$$
+
+We will translate this quite verbatim to R code.
+
+```{r}
+loglik <- function(param) {
+  # let's take a draw from f(e)
+  e <- ordinal::rgumbel(1)
+  # this is just beta'X + e
+  U_1 <- param["beta11"] * df$x11 + param["beta12"] * df$x12 + e
+  U_2 <- param["ASC2"] + param["beta21"] * df$x21 + param["beta22"] * df$x22 + e
+  
+
+  # given the error, which alternative will be chosen?
+  y <- as.numeric()
+  
+  
+  y_1 <- as.numeric(df$choice == 1) # 1 if alternative 1 was chosen 0 otherwise
+  y_2 <- as.numeric(df$choice == 2) # 1 if alternative 2 was chosen 0 otherwise
+  
+  P_1n <- exp_1 / (exp_1 + exp_2)
+  P_2n <- exp_2 / (exp_1 + exp_2)
+  
+  sum(y_1 * log(P_1n) + y_2 * log(P_2n))
+}
+```
+
