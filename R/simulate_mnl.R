@@ -6,7 +6,7 @@ simulate_mnl <- function(beta = c(ASC1 = 0, ASC2 = 1, beta11 = 0.5, beta12 = -0.
   k <- 2 # two alternatives
   simulated_data$beta <- beta
 
-  x11 <- rnorm(n)
+  x11 <- rnorm(n) # does not need to be normal!
   x12 <- rnorm(n)
   x21 <- rnorm(n)
   x22 <- rnorm(n)
@@ -18,8 +18,8 @@ simulate_mnl <- function(beta = c(ASC1 = 0, ASC2 = 1, beta11 = 0.5, beta12 = -0.
   random_matrix <- matrix(runif(length(utilities)), nrow = nrow(utilities))
 
   probabilities <- t(apply(utilities, 1, function(u) exp(u) / sum(exp(u))))
-  choices <- max.col(probabilities)
-  simulated_data$data <- data.frame(x11, x12, x21, x22, choices)
+  choice <- max.col(probabilities)
+  simulated_data$data <- data.frame(x11, x12, x21, x22, choice)
 
   return(simulated_data)
 }

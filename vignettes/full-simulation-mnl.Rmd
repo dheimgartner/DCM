@@ -121,21 +121,112 @@ Compare the model coefficients to our own implementation!
 
 We'll now rewrite the `loglik` function and approximate the integral (over error terms) with help of simulation.
 
-Recall the general form of the probability derived before in the binary case was (for the binary case):
+Recall the general form of the probability derived before was (for the binary case):
 
 $$
 P(y|x) = \int I[\beta'x + \varepsilon > 0] f(\varepsilon) d\varepsilon
 $$
+Let's start with this simpler case (only one-dimensional integral). As before, we simulate some data.
+
+```{r}
+dat_sim <- DCM::simulate_binary()
+print(dat_sim$beta)
+head(dat_sim$data)
+```
+The all in R implementation (closed-form solution) would be implemented like this:
+
+```{r}
+loglik <- function(param) {
+  latent <- param["ASC"] + param["beta1"] * dat$x1 + param["beta2"] * dat$x2
+  exp <- exp(latent)
+  P_1n <- exp / (1 + exp)
+  P_0n <- 1 - P_1n
+  
+  y_1n <- dat$choice
+  y_0n <- 1 - y_1n
+  
+  sum(y_1n * log(P_1n) + y_0n * log(P_0n))
+}
+
+param <- c(1, 1, 1)
+param <- setNames(param, c("ASC", "beta1", "beta2"))
+m <- maxLik::maxLik(loglik, start = param, method = "BFGS")
+summary(m)
+```
+
+
+```{r}
+# e is a draw from f(e) in this case logistically distributed
+# e <- rlogis(1)
+
+# given this draw, will alternative 1 be chosen?
+h <- function(param, e) {
+  # this is just beta'X
+  latent <- param["ASC"] + param["beta1"] * df$x1 + param["beta2"] * df$x2
+  # given the error, will 1 be chosen?
+  I1 <- as.numeric(latent + e > 0)
+  return(I1)
+}
+
+random_draws <- rlogis(10)
+df <- dat_sim$data
+param <- dat_sim$beta
+h(param, random_draws)
+```
+
+Now we have all the ingredients to write the full-simulation log-likelihood:
+
+```{r}
+loglik <- function(param) {
+  # to integrate over the random vector of errors, we need to take many draws
+  n_draws <- 1000
+  
+  P1 <- matrix(NA, nrow = nrow(df), ncol = n_draws)
+  error <- rlogis(n_draws)
+  
+  for (i in seq_along(error)) {
+    e <- error[i]
+    P1[, i] <- h(param, e)
+  }
+  
+  # and average
+  P1 <- apply(P1, 1, mean)
+  P0 <- 1 - P1
+  
+  y1 <- df$choice
+  y0 <- 1 - y1
+  
+  ll <- sum(y1 * log(P1) + y0 * log(P0))
+  cat(ll, "\n")
+  ll
+}
+```
+
+And estimating:
+
+```{r}
+param <- c(1, 1, 1)
+param <- setNames(param, c("ASC", "beta1", "beta2"))
+
+m <- maxLik::maxLik(loglik, start = param, method = "BFGS")
+summary(m)
+```
+
+
+
 If we have more than two oucomes and assuming that the alternative with the greatest utility is chosen then we can write:
 
 
 TODO: first read train, then correct eq below (e.g. see p.15) then implement loglik
 ...or just start with the binary case!! -> yes: keep it as simple as possible -> write simulate_binary
+Shouldn't we estimate a scale parameter for the error distribution?
+
 $$
 \begin{align}
-P(y_i|x) = \int I[\beta'x_i + \varepsilon_i > \beta'x_j + \varepsilon_j] f(\varepsilon) d\varepsilon
+P(y_i|x) = \int I[\beta'x_i + \varepsilon_i > \beta'x_j + \varepsilon_j] f(\varepsilon) d\varepsilon \: \forall j \neq i
 \end{align}
 $$
+which is a $J$-dimensional integral ($\varepsilon$ is a vector, i.e. for each utility specification). By the way, this is the probability of observing one single choice (i.e., for one individual $n$ at choice occasion $t$).
 
 We will translate this quite verbatim to R code.
 
@@ -147,7 +238,7 @@ loglik <- function(param) {
   U_1 <- param["beta11"] * df$x11 + param["beta12"] * df$x12 + e
   U_2 <- param["ASC2"] + param["beta21"] * df$x21 + param["beta22"] * df$x22 + e
   
-
+  
   # given the error, which alternative will be chosen?
   y <- as.numeric()
   
