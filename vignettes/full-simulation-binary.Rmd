@@ -1,0 +1,183 @@
+---
+title: "full-simulation-binary"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{full-simulation-binary}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(DCM)
+```
+
+## Objective
+
+Understand maximum **simulated** likelihood with help of a simple example (binary logit model).
+
+## Introduction
+
+The probability that the agent chooses outcome $y$ can be expressed as an expectation (integral over the random part) CITE:
+
+$$
+\begin{align}
+P(y|x) &= Prob(I[h(x, \varepsilon) = y] = 1) \\
+&= \int I[h(x, \varepsilon) = y] f(\varepsilon) d\varepsilon
+\end{align}
+$$
+
+In random utility theory we usually assume that the observed part of utility is $\beta'x$ (a linear combination of observable factors) and that the outcome is chosen if the utility is positive (in the binary case). Therefore we can rewrite:
+
+$$
+P(y|x) = \int I[\beta'x + \varepsilon > 0] f(\varepsilon) d\varepsilon
+$$
+
+If we assume that $\varepsilon$ is distributed logistically, such that the density is $f(\varepsilon) = e^{-\varepsilon} / (1 + e^{-\varepsilon})^2$ then we can derive a closed-form solution for the integral:
+
+$$
+\begin{align}
+P(y|x) &= \int I[\beta'x + \varepsilon > 0] f(\varepsilon) d\varepsilon \\
+&= \int I[\varepsilon > -\beta'x] f(\varepsilon) d\varepsilon \\
+&= \int_{\varepsilon = -\beta'x}^{\infty} f(\varepsilon) d\varepsilon \\
+&= 1 - F(-\beta' x) = 1 - \frac{1}{1+e^{\beta' x}} \\
+&= \frac{e^{\beta' x}}{1 + e^{\beta' x}}
+\end{align}
+$$
+
+## Estimation
+
+The goal is to learn about maximum **simulated** likelihood. This is useful for models which do not have a closed-form solution of the integral and therefore require simulation techniques to approximate it.
+
+In our case we want to simulate $P(y|x) = \int I[\beta'x + \varepsilon > 0] f(\varepsilon) d\varepsilon$. The general strategy to achieve this is:
+
+1. Draw from $f(\varepsilon)$ and label the $r$th draw $\varepsilon^r$
+2. Compute $\beta' x + \varepsilon^r$ and evaluate the indicator function (i.e. $1$ if $\beta' x + \varepsilon^r > 0$ and $0$ otherwise).
+3. Repeat step 1. and 2. $R$ times.
+4. The integral (and thus our probability) is simply the average $1/R \sum_{r=1}^R t(x, \varepsilon^r)$.
+
+Let's implement this in R.
+
+## Implementation in R
+
+We first simulate some data for illustration
+
+```{r}
+simulate_binary <- function(beta = c(ASC = 0, beta1 = 1, beta2 = 2), n = 1000, seed = 0) {
+  set.seed(seed)
+  simulated_data <- list()
+
+  simulated_data$beta <- beta
+
+  x1 <- rnorm(n) # does not need to be normal!
+  x2 <- rnorm(n)
+
+  latent <- beta["ASC"] + beta["beta1"] * x1 + beta["beta2"] * x2
+  choice <- as.numeric(latent + rlogis(n) > 0)
+
+  simulated_data$data <- data.frame(x1, x2, choice)
+
+  return(simulated_data)
+}
+
+sim_dat <- simulate_binary(n = 10e3)
+beta <- sim_dat$beta
+dat <- sim_dat$data
+
+print(beta)
+head(dat)
+```
+
+### Using `stats` to illustrate
+
+Let's use R's `stats::glm` function to test
+
+```{r}
+fit <- glm(choice ~ x1 + x2, data = dat, family = binomial(link = "logit"))
+summary(fit)
+```
+
+Compare the estimated coefficients with our assumed beta vector. Surprise!
+
+### Closed-form own implementation
+
+We use the `maxLik` package to impelemnt the closed-form solution. Compare the `loglik` function to the formulas above (REF). It translates almost verbatim to R code
+
+```{r}
+loglik <- function(param) {
+  latent <- param["ASC"] + param["beta1"] * dat$x1 + param["beta2"] * dat$x2
+  exp <- exp(latent)
+  P_1n <- exp / (1 + exp)
+  P_0n <- 1 - P_1n
+
+  y_1n <- dat$choice
+  y_0n <- 1 - y_1n
+
+  ll <- sum(y_1n * log(P_1n) + y_0n * log(P_0n))
+  cat(ll, "\n")
+  ll
+}
+
+p <- function(v) {
+  v <- setNames(v, c("ASC", "beta1", "beta2"))
+  v
+}
+
+param <- p(c(1, 1, 1))
+m <- maxLik::maxLik(loglik, start = param, method = "BFGS")
+summary(m)
+```
+
+### Maximum simulated likelihood
+
+Now to our main objective: To explore maximum simulated likelihood. Using some matrix algebra and passing a draws matrix to the `loglik` function (instead of generating the draws inside the function and/or loop over the observations)...
+
+```{r}
+n_draws <- 1000
+n_rows <- nrow(dat)
+draws_matrix <- matrix(rlogis(n_draws * n_rows), nrow = n_rows, ncol = n_draws)
+
+loglik <- function(param, epsilon = 1e-10) {
+  # 10000 x 1
+  latent <- param["ASC"] + param["beta1"] * dat$x1 + param["beta2"] * dat$x2
+
+  # 10000 x n_draws
+  indicator_ <- latent + draws_matrix
+
+  indicator <- (indicator_ > 0)
+  P_1n <- apply(indicator, 1, mean)
+  P_1n <- pmax(pmin(P_1n, 1 - epsilon), epsilon)
+  P_0n <- 1 - P_1n
+
+  y_1n <- dat$choice
+  y_0n <- 1 - y_1n
+
+  ll <- sum(y_1n * log(P_1n) + y_0n * log(P_0n))
+  cat(ll, "\n")
+  ll
+}
+```
+
+Clearly, our `loglik` function makes sense: Evaluated at the true parameters, we get the highest likelihood (which matches the non-simulated likelihood from the chapter before):
+
+```{r}
+loglik(p(c(0, 0, 0)))
+loglik(p(c(1, 1, 1)))
+loglik(p(c(0, 1, 2)))
+```
+
+Important remark: The line `P_1n <- pmax(pmin(P_1n, 1 - epsilon), epsilon)` is needed because the simulated integral (depending on the parameter values passed to it) yields $P_1n = 0$ which yields `-Inf` when taking the log. Similarly, $P_1n = 1$ would yield $P_0n = 0$ and thus the same problem. Therefore we add (or subtract) a very small value `epsilon` to 0 (from 1).
+
+Trying to estimate (again using `maxLik`) does not seem to work. Why?
+
+```{r, eval=FALSE}
+m <- maxLik::maxLik(loglik, start = param, method = "BFGS")
+summary(m)
+```
+
