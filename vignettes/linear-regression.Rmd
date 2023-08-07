@@ -1,0 +1,36 @@
+---
+title: "linear-regression"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{linear-regression}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+
+```{r}
+loglik <- function(beta) {
+  beta0 <- beta[1]
+  beta1 <- beta[2]
+  sigma <- beta[3]
+  
+  # e = uptake - b0 - b1 * conc
+  e <- CO2$uptake - beta0 - beta1 * CO2$conc
+  log_density <- function(...) dnorm(..., log = TRUE)
+  log_probs <- log_density(e, sd = sigma)
+  ll <- sum(log_probs)
+  print(ll)
+  ll
+}
+
+m <- maxLik(loglik, start = c(beta0 = 30, beta1 = 0, sigma = 10))
+summary(m)
+```
+
