@@ -170,7 +170,7 @@ loglik(p(c(0, 1, 2)))
 Trying to estimate (again using `maxLik`) does not seem to converge. Why?
 
 ```{r, eval=FALSE}
-m <- maxLik::maxLik(loglik, start = p(c(0, 1, 2)), method = "BFGS")
+m <- maxLik::maxLik(loglik, start = param, method = "BFGS")
 summary(m)
 ```
 

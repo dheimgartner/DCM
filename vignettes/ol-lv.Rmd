@@ -1,0 +1,57 @@
+---
+title: "ol-lv"
+output: pdf_document
+vignette: >
+  %\VignetteIndexEntry{ol-lv}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(DCM)
+N <- 10e3
+```
+
+## Simulate data
+
+We first simulate ordered-logit data with one latent variable.
+
+```{r}
+# Simulate LV
+X <- data.frame(x1 = rnorm(N), x2 = rnorm(N))
+betas_lv <- c(beta1 = 1, beta2 = 2)
+taus_lv <- c(tau1 = -1, tau2 = 1)
+zetas <- c(zeta1 = 1, zeta2 = 2)
+
+sim_dat_lv <- DCM::simulate_lv(X, betas_lv, taus_lv, zetas, N)
+lv <- sim_dat_lv$lv
+obs_lv <- sim_dat_lv$obs
+
+# Pass and simulate OL data
+X <- data.frame(x1 = rnorm(N), x2 = lv)
+betas <- c(beta1 = 1, beta2 = 2)
+taus <- c(tau1 = -1, tau2 = 1) # will generate 3 choices
+sim_dat_ol <- simulate_ol(X, betas, taus, N)
+obs_ol <- sim_dat_ol[, names(sim_dat_ol) != "x2"] # x2 is our lv
+
+# What we actually observe
+X <- data.frame(
+  obs_lv,
+  obs_ol
+)
+
+names(X) <- c("x1_lv", "x2_lv", "ind1", "ind2", "x1_ol", "choice")
+head(X)
+```
+
+## Estimating using `apollo`
+
+-> See trb24 -> ol_lv_simulation.R -> # Multiple indicators
+
