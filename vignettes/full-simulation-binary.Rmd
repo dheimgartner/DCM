@@ -15,6 +15,12 @@ knitr::opts_chunk$set(
 )
 ```
 
+```{r, message=FALSE}
+library(tidyverse)
+library(plotly)
+```
+
+
 ## Objective
 
 Understand maximum **simulated** likelihood with help of a simple example (binary logit model).
@@ -100,6 +106,8 @@ Compare the estimated coefficients with our assumed beta vector. Surprise!
 
 ### Closed-form own implementation
 
+(See the *using-maxlik* vignette from the `maxLik` package for a somewhat nicer implementation...)
+
 We use the `maxLik` package to impelemnt the closed-form solution. Compare the `loglik` function to the formulas above. It translates almost verbatim to R code
 
 ```{r}
@@ -152,6 +160,7 @@ loglik <- function(param, epsilon = 1e-10) {
   y_0n <- 1 - y_1n
   
   ll <- sum(y_1n * log(P_1n) + y_0n * log(P_0n))
+  
   cat(ll, "\n")
   ll
 }
@@ -173,6 +182,28 @@ Trying to estimate (again using `maxLik`) does not seem to converge. Why?
 m <- maxLik::maxLik(loglik, start = param, method = "BFGS")
 summary(m)
 ```
+
+### The problem
+
+I think the non-smoothness of the simulated loglikelihood is the problem...
+
+```{r}
+beta1 <- seq(0, 3, 0.1)
+beta2 <- seq(1, 4, 0.1)
+betas <- expand.grid(beta1, beta2)
+coefs <- data.frame(asc = 0, beta1 = betas[, 1], beta2 = betas[, 2])
+
+coefs <- coefs %>%
+  rowwise() %>%
+  mutate(p = list(p(c(asc, beta1, beta2)))) %>%
+  ungroup() %>%
+  mutate(ll = unlist(map(p, ~ loglik(.x)))) %>%
+  select(beta1, beta2, ll)
+
+plotly::plot_ly(data = coefs, x = ~beta1, y = ~beta2, z = ~ll) %>%
+  add_trace(type = "mesh3d", intensity = ~ll)
+```
+
 
 ### Using `plogis` instead
 
