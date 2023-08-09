@@ -1,0 +1,261 @@
+---
+title: "sample-selection"
+output: 
+  pdf_document:
+    highlight: rstudio
+    extra_dependencies: ["amsmath"]
+vignette: >
+  %\VignetteIndexEntry{sample-selection}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+bibliography: references.bib
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r, message=FALSE}
+# library(DCM)
+library(tidyverse)
+library(sampleSelection)
+library(mvtnorm)
+library(maxLik)
+```
+
+## Tobit-2 model
+
+Here is the basic model structure:
+
+\begin{align}
+  y_{i}^{S*} &= \mathbf{\beta^{S'}x_{i}^{S}} + \varepsilon_{i}^{S} \\
+  y_{i}^{O*} &= \mathbf{\beta^{O'}x_{i}^{O}} + \varepsilon_{i}^{O}
+\end{align}
+
+\begin{align}
+  y_{i}^{S} &= 
+    \begin{cases}
+      0 & \text{if} \, y_{i}^{S*} \leq 0 \\
+      1 & \text{otherwise}
+    \end{cases} \\
+  y_{i}^{O} &= 
+    \begin{cases}
+      0 & \text{if} \, y_{i}^{S} = 0 \leftrightarrow y_{i}^{S*} > 0 \\
+      y_{i}^{O*} & \text{otherwise}
+    \end{cases}
+\end{align}
+
+As always, first simulate some data - our ground truth:
+
+```{r}
+N <- 10e3
+beta_s <- 2
+beta_o <- 3
+set.seed(0)
+eps <- rmvnorm(N, c(0, 0), matrix(c(1, -0.7, -0.7, 1), 2, 2))
+xs <- runif(N)
+ys <- beta_s * xs + eps[, 1] > 0
+xo <- runif(N)
+yoX <- beta_o * xo + eps[, 2]
+yo <- yoX * (ys > 0)
+```
+
+And estimate the model using `sampleSelection`:
+
+```{r}
+fit <- sampleSelection::selection(ys ~ xs, yo ~ xo)
+summary(fit)
+```
+
+The general form of the likelihood function (for an individual observation) reads:
+
+\begin{equation}
+  L = P(y_{i}^{S*} \leq 0)^{1 - y_{i}^S}
+    [f(y_{i}^O | y_{i}^{S*} > 0) P(y_{i}^{S*} > 0)]^{y_{i}^S}
+\end{equation}
+
+Given our model assumptions, we can rewrite:
+
+\begin{equation}
+  L = \Phi(-\beta^{S'} x_{i}^S)^{1 - y_{i}^S}
+    [\phi(y_{i}^O - \beta^{O'} x_{i}^O) | y_{i}^{S*} > 0) \Phi(\beta^{S'} x_{i}^S)]^{y_{i}^S}
+\end{equation}
+
+where $\Phi$ is the CDF and $\phi$ the PDF of a bivariate normal distribution.
+
+Taking the logs yields:
+
+\begin{equation}
+  l = {1 - y_{i}^S} \log(\Phi(-\beta^{S'} x_{i}^S)) +
+    {y_{i}^S} \log(\phi(y_{i}^O - \beta^{O'} x_{i}^O) | y_{i}^{S*} > 0) \Phi(\beta^{S'} x_{i}^S))
+\end{equation}
+
+We sum over all individuals.
+
+Can we code this just like that (*spoiler: no, we can't*)?
+
+```{r}
+loglik <- function(param) {
+  sigma_11 <- 1 # normalization
+  sigma_12 <- param["sigma_12"]
+  sigma_21 <- sigma_12
+  sigma_22 <- param["sigma_22"]
+  beta_o <- param["beta_o"]
+  beta_s <- param["beta_s"]
+  
+  sigma <- matrix(c(sigma_11, sigma_12, sigma_21, sigma_22), 2, 2)
+  
+  bsXxs <- beta_s * xs
+  Phi <- pnorm(-bsXxs)
+  selection <- (1 - ys) * log(Phi)
+  
+  yo_boXxo <- yo - beta_o * xo
+  phi <- sapply(yo_boXxo, function(x) dmvnorm(c(0, x), sigma = sigma)) # this is wrong!
+  outcome <- ys * log(phi * (1 - Phi))
+  
+  ll <- sum(selection + outcome)
+  cat(ll, "\n")
+  ll
+}
+```
+
+Test
+
+```{r}
+p <- function(v) {
+  assertthat::assert_that(length(v) == 4,
+                          msg = "v has to be a vector of length 4")
+  setNames(v, c("sigma_12", "sigma_22", "beta_s", "beta_o"))
+}
+
+loglik(p(c(0.7, 1, 2, 3)))
+```
+
+Estimate
+
+```{r, eval=FALSE}
+m <- maxLik::maxLik(loglik, start = p(c(0.5, 1, 1, 1)))
+summary(m)
+```
+
+### Why is it actually wrong?
+
+From @takeshi [p. 386], and by own reasoning, the likelihood is made up of two probabilities: 1. $P(y^S = 0)$ and 2. $P(y^S = 1, y^O = y^{O*})$ (i.e. the joint distribution). The joint probability (2.) can be written as $P(y^{O*} | y^{S*}> 1) P(y^{S*} > 1)$. The likelihood function of the model becomes:
+
+\begin{equation}
+  L = 
+    \prod_0 P(y^{S*} \leq 0)
+    \prod_1 f(y^{O*}|y^{S*} > 0) P(y^{S*} > 0)
+\end{equation}
+
+Now, we write (pay attention to the limits of the integral):
+
+\begin{equation}
+  L = 
+    \prod_0 P(y^{S*} \leq 0)
+    \prod_1 \int_{0}^{\infty}f(y^{S*}, y^{O*}) dy^{S*}
+\end{equation}
+
+Clearly, the conditional density as modelled in the `loglik` function above (simply setting $y^{O*}$ to $0$) is wrong. In fact, we would have to take draws from $f(y^{S*}, y^{O*})$ and integrate over $y^{S*}$ from $0$ to $\infty$. This is not equal to $f(0, y^{O*}) \Phi(y^{S} = 1)$. The question becomes how to simulate the integral (with the limits)?
+
+I think one could do something like this:
+
+\begin{equation}
+  \int I[y^{S*} > 0] f(y^{S*}, y^{O*}) dy^{S*}
+\end{equation}
+
+and substituting the model equations for $y^{O*}$ and $y^{S*}$.
+
+## Simulated maximum likelihood
+
+So as we have seen above (and ignoring the closed-form solution) we could simulate the likelihood function by taking draws from the bivariate normal distribution. However, I expect this to lead to similar complications as in `full-simulation-binary.Rmd`. Let's try anyways:
+
+```{r}
+nDraws <- 5e3
+
+loglik <- function(param) {
+  set.seed(0)
+  bo <- param["beta_o"]
+  bs <- param["beta_s"]
+  s11 <- 1
+  s12 <- param["sigma_12"]
+  s21 <- s12 # it's a cov matrix!
+  s22 <- param["sigma_22"]
+  
+  sigma <- matrix(c(s11, s12, s21, s22), 2, 2)
+  
+  Phi <- pnorm(-bs * xs, sd = s11) # s11 = 1 -> standard normal CDF
+  
+  mean_yo_ <- bo * xo
+  mean_ys_ <- bs * xs
+  draws <- map2(mean_ys_, mean_yo_, function(s, o) rmvnorm(nDraws, mean = c(s, o), sigma = sigma))
+  draws_ys <- map(draws, function(x) x[, 1])
+  indicator <- map(draws_ys, function(x) x > 0)
+  integral <- unlist(map(indicator, function(x) mean(x)))
+  
+  flag_0 <- as.numeric(ys == 0)
+  flag_1 <- 1 - flag_0
+  
+  log_0 <- log(Phi)
+  log_1 <- log(integral)
+  
+  ll <- sum(flag_0 * log_0, flag_1 * log_1)
+  cat(ll, "\n")
+  ll
+}
+```
+
+Test
+
+```{r}
+loglik(p(c(0.5, 1, 1, 1)))
+loglik(p(c(0.9, 1, 4, 1)))
+loglik(p(c(0.7, 1, 2, 3)))
+```
+
+Estimate
+
+```{r, eval=FALSE}
+m <- maxLik::maxLik(loglik, start = p(c(0.7, 1, 2, 3)))
+summary(m)
+```
+
+### Why is it still wrong?
+
+First, drawing the surface hints that there is something weird going on...
+
+```{r, eval=FALSE}
+beta_o <- seq(0, 3, 0.1)
+beta_s <- seq(1, 4, 0.1)
+betas <- expand.grid(beta_o, beta_s)
+coefs <- data.frame(sigma_12 = 0.7, sigma_22 = 1, beta_o = betas[, 1], beta_s = betas[, 2])
+
+coefs <- coefs %>%
+  rowwise() %>%
+  mutate(p = list(p(c(sigma_12, sigma_22, beta_s, beta_o)))) %>%
+  ungroup() %>%
+  mutate(ll = unlist(map(p, ~ loglik(.x)))) %>%
+  select(beta_o, beta_s, ll)
+
+plotly::plot_ly(data = coefs, x = ~beta_o, y = ~beta_s, z = ~ll) %>%
+  add_trace(type = "mesh3d", intensity = ~ll)
+```
+
+Thinking again, what integration equation actually implies and substituting the latent variables, we get:
+
+\begin{equation}
+  \int I[\beta^{S'} x^S + \varepsilon^S > 0] f(\beta^{S'} x^S + \varepsilon^S, \beta^{O'} x^O + \varepsilon^O) d\varepsilon^{S}
+\end{equation}
+
+(\textit{makes this substitution sense, in particular the integration over $\varepsilon_s$?})
+
+So wouldn't we have to take draws for the vector $\varepsilon$, then generate the latent variables and then take a new draw from the distribution of the latent variables? But that would involve taking two draws from `rmvnorm()`: Once for the vector of errors to generate the latent variables and then once to draw from the joint distribution of latent variables...
+
+But $y^{S*}$ and $y^{O*}$ are only random because of $\varepsilon^{S*}$, respectively $\varepsilon^{O*}$. Therefore they should be bivariately normal distributed with a new mean and the same cov-matrix as the error bivariate distribution. So I think the above `loglik` implementation kind of makes sense!
+
+
+
+## References
