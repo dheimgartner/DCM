@@ -32,35 +32,35 @@ You may also want to consult `sample-selection.Rmd` for more background about th
 We follow their notation and the model equations read:
 
 \begin{align}
-  t_i^{*} = \mathbf{\gamma' X_i} + \varepsilon_i, \quad &t_i = 1 \ \text{if} \ t_i^{*} > 0 \ \text{and} \ t_i = 0 \ \text{otherwise} \\
-  N_i^{*} = \mathbf{\alpha' Z_i} + \eta_i, \quad &N_i = j \ \text{if} \ a_{j-1} < N_i^{*} \leq a_j, \\
-  &j = 1,2,\dots,J, \quad N_i \ \text{observed only if} \ t_i^{*} > 0 \nonumber
+t_i^{*} = \mathbf{\gamma' X_i} + \varepsilon_i, \quad &t_i = 1 \ \text{if} \ t_i^{*} > 0 \ \text{and} \ t_i = 0 \ \text{otherwise} \\
+N_i^{*} = \mathbf{\alpha' Z_i} + \eta_i, \quad &N_i = j \ \text{if} \ a_{j-1} < N_i^{*} \leq a_j, \\
+&j = 1,2,\dots,J, \quad N_i \ \text{observed only if} \ t_i^{*} > 0 \nonumber
 \end{align}
 
 The error terms are assumed to follow a bivariate normal distribution. The probability that individual $i$ telecommutes ($t_i = 1$) and does so for $j$ days is:
 
 \begin{align}
-  P(t_i = 1, N_i = j) &= \Phi_2(a_j - \mathbf{\alpha' Z_i}; \mathbf{\gamma' X_i}; -\rho) \\
-  &-\Phi_2(a_{j-1} - \mathbf{\alpha' Z_i}; \mathbf{\gamma' X_i}; -\rho) \nonumber
+P(t_i = 1, N_i = j) &= \Phi_2(a_j - \mathbf{\alpha' Z_i}; \mathbf{\gamma' X_i}; -\rho) \\
+&-\Phi_2(a_{j-1} - \mathbf{\alpha' Z_i}; \mathbf{\gamma' X_i}; -\rho) \nonumber
 \end{align}
 
 Let's define a set of dummy variables $M_{ij}$:
 
 \begin{equation}
-  M_{ij} =
-    \begin{cases}
-      1 & \text{if} \ N_i = j (\text{i.e.}, a_{j-1} < N_i^{*} \leq a_j) \\
-      0 & \text{otherwise}
-    \end{cases}
+M_{ij} =
+\begin{cases}
+1 & \text{if} \ N_i = j (\text{i.e.}, a_{j-1} < N_i^{*} \leq a_j) \\
+0 & \text{otherwise}
+\end{cases}
 \end{equation}
 
 This yields the following maximum likelihood (not so nice notation...):
 
 \begin{align}
-  L &= 
-    \prod_{i=1}^I \biggl\{ [1 - \Phi(\mathbf{\gamma' X_i})]^{1-t_i} 
-      \prod_{j=1}^J [\Phi_2(a_j - \mathbf{\alpha' Z_i}; \mathbf{\gamma' X_i}; -\rho) \\
-      &-\Phi_2(a_{j-1} - \mathbf{\alpha' Z_i}; \mathbf{\gamma' X_i}; -\rho)]^{M_{ij}}\biggr\}^{t_i} \nonumber
+L &= 
+\prod_{i=1}^I \biggl\{ [1 - \Phi(\mathbf{\gamma' X_i})]^{1-t_i} 
+\prod_{j=1}^J [\Phi_2(a_j - \mathbf{\alpha' Z_i}; \mathbf{\gamma' X_i}; -\rho) \\
+&-\Phi_2(a_{j-1} - \mathbf{\alpha' Z_i}; \mathbf{\gamma' X_i}; -\rho)]^{M_{ij}}\biggr\}^{t_i} \nonumber
 \end{align}
 
 See also @deluca and @toomet
@@ -145,10 +145,10 @@ fit <- MASS::polr(N ~ Z, data = dat_, method = "probit")
 summary(fit)
 ```
 
-## Error correlation `rho=0.8`
+## Error correlation `rho > 0`
 
 ```{r, fig.width=5, fig.height=5, fig.align='center'}
-sim_dat_ <- simulate_data(rho = 0.8, n = n)
+sim_dat_ <- simulate_data(rho = 0.6, n = n)
 sim_dat_$ground_truth
 dat <- sim_dat_$data
 plot(sim_dat_$errors, col = ifelse(dat$t, "black", "grey"),
@@ -221,7 +221,7 @@ loglik <- function(param) {
   ll
 }
 
-m <- maxLik::maxLik(loglik, start = c(alpha = 0, a1 = -1, a2 = 1))
+m <- maxLik::maxLik(loglik, start = c(alpha =01, a1 = -1, a2 = 1))
 summary(m)
 ```
 
@@ -237,7 +237,7 @@ dat <- sim_dat_$data
 I1 <- as.numeric(dat$N == 1)
 I2 <- as.numeric(dat$N == 2)
 I3 <- as.numeric(dat$N == 3)
-  
+
 loglik <- function(param) {
   alpha <- param["alpha"]
   gamma <- param["gamma"]
@@ -249,9 +249,11 @@ loglik <- function(param) {
   sigma <- matrix(c(1, -rho, -rho, 1), 2, 2)
   n_p_inf <- rep(Inf, n)
   pt0 <- 1 - pnorm(gammaX)
-  pt1_j1 <- pmnorm(cbind(gammaX, a1 - alphaZ), varcov = sigma) # below
-  pt1_j2 <- pmnorm(cbind(gammaX, a2 - alphaZ), varcov = sigma) - pt1_j1 # between
-  pt1_j3 <- pmnorm(cbind(gammaX, -(a2 - alphaZ)), varcov = sigma) # above
+  a1 <- pmnorm(cbind(gammaX, a1 - alphaZ), varcov = sigma)
+  a2 <- pmnorm(cbind(gammaX, a2 - alphaZ), varcov = sigma)
+  pt1_j1 <- a1 # below
+  pt1_j2 <- a2 - a1 # between
+  pt1_j3 <- pmnorm(cbind(gammaX, n_p_inf), varcov = sigma) - a2 # above
   selection <- (1 - dat$t) * log(pt0)
   observation <- dat$t * (I1 * log(pt1_j1) + I2 * log(pt1_j2) + I3 * log(pt1_j3))
   ll <- sum(selection + observation)
@@ -259,7 +261,7 @@ loglik <- function(param) {
   ll
 }
 
-loglik(param = sim_dat$ground_truth)
+loglik(param = sim_dat_$ground_truth)
 
 m <- maxLik::maxLik(loglik, start = c(gamma = 1, alpha = 1, rho = 0, a1 = -1, a2 = 1))
 summary(m)
