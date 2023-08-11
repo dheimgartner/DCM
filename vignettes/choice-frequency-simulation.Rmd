@@ -1,0 +1,268 @@
+---
+title: "choice-frequency-simulation"
+output: 
+  pdf_document:
+    highlight: rstudio
+vignette: >
+  %\VignetteIndexEntry{choice-frequency-simulation}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+bibliography: references.bib
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup, message=FALSE}
+library(tidyverse)
+library(mvtnorm)
+library(mnormt)
+```
+
+## Introduction
+
+This paper does a simulation study to learn about the simultaneous equation model as implemented in @popuri. The modeling framework is actually a sample selection (Heckman type model) where the selection equation is binary (as usual) but the outcome equation features a discrete (ordered) choice (instead of a continuous one).
+
+You may also want to consult `sample-selection.Rmd` for more background about the modeling framework (there a Tobit-2-model).
+
+We follow their notation and the model equations read:
+
+\begin{align}
+  t_i^{*} = \mathbf{\gamma' X_i} + \varepsilon_i, \quad &t_i = 1 \ \text{if} \ t_i^{*} > 0 \ \text{and} \ t_i = 0 \ \text{otherwise} \\
+  N_i^{*} = \mathbf{\alpha' Z_i} + \eta_i, \quad &N_i = j \ \text{if} \ a_{j-1} < N_i^{*} \leq a_j, \\
+  &j = 1,2,\dots,J, \quad N_i \ \text{observed only if} \ t_i^{*} > 0 \nonumber
+\end{align}
+
+The error terms are assumed to follow a bivariate normal distribution. The probability that individual $i$ telecommutes ($t_i = 1$) and does so for $j$ days is:
+
+\begin{align}
+  P(t_i = 1, N_i = j) &= \Phi_2(a_j - \mathbf{\alpha' Z_i}; \mathbf{\gamma' X_i}; -\rho) \\
+  &-\Phi_2(a_{j-1} - \mathbf{\alpha' Z_i}; \mathbf{\gamma' X_i}; -\rho) \nonumber
+\end{align}
+
+Let's define a set of dummy variables $M_{ij}$:
+
+\begin{equation}
+  M_{ij} =
+    \begin{cases}
+      1 & \text{if} \ N_i = j (\text{i.e.}, a_{j-1} < N_i^{*} \leq a_j) \\
+      0 & \text{otherwise}
+    \end{cases}
+\end{equation}
+
+This yields the following maximum likelihood (not so nice notation...):
+
+\begin{align}
+  L &= 
+    \prod_{i=1}^I \biggl\{ [1 - \Phi(\mathbf{\gamma' X_i})]^{1-t_i} 
+      \prod_{j=1}^J [\Phi_2(a_j - \mathbf{\alpha' Z_i}; \mathbf{\gamma' X_i}; -\rho) \\
+      &-\Phi_2(a_{j-1} - \mathbf{\alpha' Z_i}; \mathbf{\gamma' X_i}; -\rho)]^{M_{ij}}\biggr\}^{t_i} \nonumber
+\end{align}
+
+See also @deluca and @toomet
+
+## Simulation
+
+```{r}
+n <- 10e3
+simulate_data <- function(rho, n) {
+  out <- list()
+  # Parameters
+  n <- n
+  gamma <- 1.5
+  alpha <- 2
+  rho <- rho
+  a1 <- 0.5
+  a2 <- 1.5
+  
+  ground_truth <- c(gamma = gamma, alpha = alpha, rho = rho, a1 = a1, a2 = a2)
+  
+  # Errors
+  set.seed(0)
+  errors <- rmvnorm(n, c(0, 0), sigma = matrix(c(1, rho, rho, 1), 2, 2))
+  epsilon <- errors[, 1]
+  eta <- errors[, 2]
+  
+  # Data generating process
+  X <- runif(n)
+  t_star <- gamma * X + epsilon
+  t <- t_star > 0
+  Z <- runif(n)
+  N_star <- alpha * Z + eta
+  N <- cut(N_star, breaks = c(-Inf, a1, a2, Inf))
+  levels(N) <- c(1, 2, 3)
+  N <- as.numeric(as.character(N))
+  N <- N * t
+  
+  # Model frame
+  dat <- data.frame(
+    X = X,
+    Z = Z,
+    t = as.numeric(t),
+    N = N
+  )
+  
+  out$ground_truth <- ground_truth
+  out$errors <- errors
+  out$data <- dat
+  
+  return(out)
+}
+```
+
+## No error correlation `rho=0`
+
+```{r, fig.width=5, fig.height=5, fig.align='center'}
+sim_dat <- simulate_data(rho = 0, n = n)
+sim_dat$ground_truth
+dat <- sim_dat$data
+plot(sim_dat$errors, col = ifelse(dat$t, "black", "grey"),
+     xlab = "epsilon",
+     ylab = "eta")
+
+table(dat$t)
+table(dat$N)
+head(dat)
+```
+
+### Estimate binary probit
+
+```{r}
+fit <- stats::glm(t ~ X, data = dat, family = binomial(link = "probit"))
+summary(fit)
+```
+
+### Estimate ordered probit
+
+```{r}
+dat_ <- dat[dat$t == 1, ]
+dat_$N <- factor(dat_$N)
+fit <- MASS::polr(N ~ Z, data = dat_, method = "probit")
+summary(fit)
+```
+
+## Error correlation `rho=0.8`
+
+```{r, fig.width=5, fig.height=5, fig.align='center'}
+sim_dat_ <- simulate_data(rho = 0.8, n = n)
+sim_dat_$ground_truth
+dat <- sim_dat_$data
+plot(sim_dat_$errors, col = ifelse(dat$t, "black", "grey"),
+     xlab = "epsilon",
+     ylab = "eta")
+```
+
+### Estimate binary probit
+
+```{r}
+fit <- stats::glm(t ~ X, data = dat, family = binomial(link = "probit"))
+summary(fit)
+```
+
+### Estimate ordered probit
+
+```{r}
+dat_ <- dat[dat$t == 1, ]
+dat_$N <- factor(dat_$N)
+fit <- MASS::polr(N ~ Z, data = dat_, method = "probit")
+summary(fit)
+```
+
+The estimates are **upward** biased!
+
+## Own implementation binary probit
+
+Again, back to no error correlation.
+
+```{r}
+sim_dat$ground_truth
+dat <- sim_dat$data
+dat_ <- dat[dat$t == 1, ]
+n_ <- nrow(dat_)
+```
+
+
+```{r}
+loglik <- function(param) {
+  gamma <- param["gamma"]
+  gammaX <- gamma * dat$X
+  p1 <- pnorm(gammaX)
+  p0 <- 1 - p1
+  ll <- sum((1 - dat$t) * log(p0) + dat$t * log(p1))
+  # cat(ll, "\n")
+  ll
+}
+
+m <- maxLik::maxLik(loglik, start = c(gamma = 0))
+summary(m)
+```
+
+## Own implementation ordered probit
+
+```{r}
+loglik <- function(param) {
+  alpha <- param["alpha"]
+  a1 <- param["a1"]
+  a2 <- param["a2"]
+  alphaZ <- alpha * dat_$Z
+  # could be done outside once and for all...
+  I1 <- as.numeric(dat_$N == 1)
+  I2 <- as.numeric(dat_$N == 2)
+  I3 <- as.numeric(dat_$N == 3)
+  p1 <- pnorm(a1 - alphaZ)
+  p2 <- pnorm(a2 - alphaZ) - pnorm(a1 - alphaZ)
+  p3 <- 1 - pnorm(a2 - alphaZ)
+  ll <- sum(I1 * log(p1), I2 * log(p2), I3 * log(p3))
+  # cat(ll, "\n")
+  ll
+}
+
+m <- maxLik::maxLik(loglik, start = c(alpha = 0, a1 = -1, a2 = 1))
+summary(m)
+```
+
+## Selection model
+
+Now back to the main purpose: To estimate the selection model with ordered response data. Here we actually implement the log-likelihood (i.e. log-transforming the equation elaborated in the intro).
+
+```{r}
+sim_dat_$ground_truth
+dat <- sim_dat_$data
+
+# Compute once and for all itters
+I1 <- as.numeric(dat$N == 1)
+I2 <- as.numeric(dat$N == 2)
+I3 <- as.numeric(dat$N == 3)
+  
+loglik <- function(param) {
+  alpha <- param["alpha"]
+  gamma <- param["gamma"]
+  rho <- param["rho"]
+  a1 <- param["a1"]
+  a2 <- param["a2"]
+  gammaX <- gamma * dat$X
+  alphaZ <- alpha * dat$Z
+  sigma <- matrix(c(1, -rho, -rho, 1), 2, 2)
+  n_p_inf <- rep(Inf, n)
+  pt0 <- 1 - pnorm(gammaX)
+  pt1_j1 <- pmnorm(cbind(gammaX, a1 - alphaZ), varcov = sigma) # below
+  pt1_j2 <- pmnorm(cbind(gammaX, a2 - alphaZ), varcov = sigma) - pt1_j1 # between
+  pt1_j3 <- pmnorm(cbind(gammaX, -(a2 - alphaZ)), varcov = sigma) # above
+  selection <- (1 - dat$t) * log(pt0)
+  observation <- dat$t * (I1 * log(pt1_j1) + I2 * log(pt1_j2) + I3 * log(pt1_j3))
+  ll <- sum(selection + observation)
+  # cat(ll, "\n")
+  ll
+}
+
+loglik(param = sim_dat$ground_truth)
+
+m <- maxLik::maxLik(loglik, start = c(gamma = 1, alpha = 1, rho = 0, a1 = -1, a2 = 1))
+summary(m)
+```
+
+# References
