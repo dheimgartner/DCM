@@ -2,7 +2,7 @@
 title: "choice-frequency-simulation"
 output: 
   pdf_document:
-    highlight: rstudio
+    highlight: pygments
 vignette: >
   %\VignetteIndexEntry{choice-frequency-simulation}
   %\VignetteEngine{knitr::rmarkdown}
