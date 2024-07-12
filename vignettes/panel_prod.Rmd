@@ -1,0 +1,140 @@
+---
+title: "Panel product"
+output:
+  pdf_document:
+    highlight: pygments
+vignette: >
+  %\VignetteIndexEntry{panel_prod}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(DCM)
+library(apollo)
+```
+
+
+Taking the product over observations for each individual (i.e., the probability of observing a sequence of choices) makes only a difference if we have random effects (because there we need the same draw for an individual for all observations).
+
+Without the REC there is essentially no difference between the logit model with panel data and with purely cross-sectional data (Train, p. 55).
+
+
+```{r}
+apollo_initialise()
+
+apollo_control = list(
+  modelName       = "MNL_SP",
+  modelDescr      = "Simple MNL model on mode choice SP data",
+  indivID         = "ID",
+  outputDirectory = "bla"
+)
+
+database = apollo_modeChoiceData
+
+database = subset(database,database$SP==1)
+
+apollo_beta=c(asc_car      = 0,
+              asc_bus      = 0,
+              asc_air      = 0,
+              asc_rail     = 0,
+              b_tt_car     = 0,
+              b_tt_bus     = 0,
+              b_tt_air     = 0,
+              b_tt_rail    = 0,
+              b_access     = 0,
+              b_cost       = 0,
+              b_no_frills  = 0,
+              b_wifi       = 0,
+              b_food       = 0)
+
+apollo_fixed = c("asc_car","b_no_frills")
+
+apollo_inputs = apollo_validateInputs()
+
+apollo_probabilities=function(apollo_beta, apollo_inputs, functionality="estimate"){
+  
+  apollo_attach(apollo_beta, apollo_inputs)
+  on.exit(apollo_detach(apollo_beta, apollo_inputs))
+  
+  P = list()
+  
+  V = list()
+  V[["car"]]  = asc_car  + b_tt_car  * time_car                           + b_cost * cost_car
+  V[["bus"]]  = asc_bus  + b_tt_bus  * time_bus  + b_access * access_bus  + b_cost * cost_bus 
+  V[["air"]]  = asc_air  + b_tt_air  * time_air  + b_access * access_air  + b_cost * cost_air    + b_no_frills * ( service_air == 1 )  + b_wifi * ( service_air == 2 )  + b_food * ( service_air == 3 )
+  V[["rail"]] = asc_rail + b_tt_rail * time_rail + b_access * access_rail + b_cost * cost_rail   + b_no_frills * ( service_rail == 1 ) + b_wifi * ( service_rail == 2 ) + b_food * ( service_rail == 3 )
+
+  mnl_settings = list(
+    alternatives  = c(car=1, bus=2, air=3, rail=4), 
+    avail         = list(car=av_car, bus=av_bus, air=av_air, rail=av_rail), 
+    choiceVar     = choice,
+    utilities     = V
+  )
+  
+  P[["model"]] = apollo_mnl(mnl_settings, functionality)
+  
+  P = apollo_panelProd(P, apollo_inputs, functionality)
+
+  P = apollo_prepareProb(P, apollo_inputs, functionality)
+  return(P)
+}
+
+out_1 <- apollo_probabilities(apollo_beta, apollo_inputs)
+model_1 = apollo_estimate(apollo_beta, apollo_fixed, apollo_probabilities, apollo_inputs)
+```
+
+
+No `apollo_panelProd()`
+
+```{r}
+apollo_probabilities=function(apollo_beta, apollo_inputs, functionality="estimate"){
+  
+  apollo_attach(apollo_beta, apollo_inputs)
+  on.exit(apollo_detach(apollo_beta, apollo_inputs))
+  
+  P = list()
+  
+  V = list()
+  V[["car"]]  = asc_car  + b_tt_car  * time_car                           + b_cost * cost_car
+  V[["bus"]]  = asc_bus  + b_tt_bus  * time_bus  + b_access * access_bus  + b_cost * cost_bus 
+  V[["air"]]  = asc_air  + b_tt_air  * time_air  + b_access * access_air  + b_cost * cost_air    + b_no_frills * ( service_air == 1 )  + b_wifi * ( service_air == 2 )  + b_food * ( service_air == 3 )
+  V[["rail"]] = asc_rail + b_tt_rail * time_rail + b_access * access_rail + b_cost * cost_rail   + b_no_frills * ( service_rail == 1 ) + b_wifi * ( service_rail == 2 ) + b_food * ( service_rail == 3 )
+  
+  mnl_settings = list(
+    alternatives  = c(car=1, bus=2, air=3, rail=4), 
+    avail         = list(car=av_car, bus=av_bus, air=av_air, rail=av_rail), 
+    choiceVar     = choice,
+    utilities     = V
+  )
+  
+  P[["model"]] = apollo_mnl(mnl_settings, functionality)
+  
+  # P = apollo_panelProd(P, apollo_inputs, functionality)
+  
+  P = apollo_prepareProb(P, apollo_inputs, functionality)
+  return(P)
+}
+
+database$ID <- 1:nrow(database)
+apollo_inputs = apollo_validateInputs()
+
+out_2 <- apollo_probabilities(apollo_beta, apollo_inputs)
+model_2 = apollo_estimate(apollo_beta, apollo_fixed, apollo_probabilities, apollo_inputs)
+```
+
+The standard errors (derived from the Hessian) are not exactly the same. Are these numerical differences?
+
+```{r}
+apollo_modelOutput(model_1)
+apollo_modelOutput(model_2)
+```
+
+
