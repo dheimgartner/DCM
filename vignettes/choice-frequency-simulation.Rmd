@@ -253,7 +253,7 @@ loglik <- function(param) {
   a2 <- pmnorm(cbind(gammaX, a2 - alphaZ), varcov = sigma)
   pt1_j1 <- a1 # below
   pt1_j2 <- a2 - a1 # between
-  pt1_j3 <- pmnorm(cbind(gammaX, n_p_inf), varcov = sigma) - a2 # above
+  pt1_j3 <- pmnorm(cbind(gammaX, n_p_inf), varcov = sigma) - a2 # above (I think we should just use the CDF here, no?)
   selection <- (1 - dat$t) * log(pt0)
   observation <- dat$t * (I1 * log(pt1_j1) + I2 * log(pt1_j2) + I3 * log(pt1_j3))
   ll <- sum(selection + observation)
